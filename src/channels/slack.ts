@@ -94,8 +94,7 @@ export class SlackChannel implements Channel {
       const groups = this.opts.registeredGroups();
       if (!groups[jid]) return;
 
-      const isBotMessage =
-        !!msg.bot_id || msg.user === this.botUserId;
+      const isBotMessage = !!msg.bot_id || msg.user === this.botUserId;
 
       let senderName: string;
       if (isBotMessage) {
@@ -107,14 +106,25 @@ export class SlackChannel implements Channel {
           'unknown';
       }
 
-      // Translate Slack <@UBOTID> mentions into TRIGGER_PATTERN format.
-      // Slack encodes @mentions as <@U12345>, which won't match TRIGGER_PATTERN
-      // (e.g., ^@<ASSISTANT_NAME>\b), so we prepend the trigger when the bot is @mentioned.
+      // Translate Slack <@UBOTID> mentions into the group's trigger pattern format.
+      // Slack encodes @mentions as <@U12345>, which won't match the trigger pattern,
+      // so we prepend the group-specific trigger word when the bot is @mentioned.
       let content = msg.text;
       if (this.botUserId && !isBotMessage) {
         const mentionPattern = `<@${this.botUserId}>`;
-        if (content.includes(mentionPattern) && !TRIGGER_PATTERN.test(content)) {
-          content = `@${ASSISTANT_NAME} ${content}`;
+        const group = groups[jid];
+        const triggerWord = group?.trigger || ASSISTANT_NAME;
+        const groupTriggerPattern = group?.trigger
+          ? new RegExp(`^@${group.trigger.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i')
+          : TRIGGER_PATTERN;
+        if (
+          content.includes(mentionPattern) &&
+          !groupTriggerPattern.test(content)
+        ) {
+          content = content.replace(mentionPattern, `@${triggerWord}`);
+          if (!content.startsWith(`@${triggerWord}`)) {
+            content = `@${triggerWord} ${content}`;
+          }
         }
       }
 
@@ -142,10 +152,7 @@ export class SlackChannel implements Channel {
       this.botUserId = auth.user_id as string;
       logger.info({ botUserId: this.botUserId }, 'Connected to Slack');
     } catch (err) {
-      logger.warn(
-        { err },
-        'Connected to Slack but failed to get bot user ID',
-      );
+      logger.warn({ err }, 'Connected to Slack but failed to get bot user ID');
     }
 
     this.connected = true;
@@ -245,9 +252,7 @@ export class SlackChannel implements Channel {
     }
   }
 
-  private async resolveUserName(
-    userId: string,
-  ): Promise<string | undefined> {
+  private async resolveUserName(userId: string): Promise<string | undefined> {
     if (!userId) return undefined;
 
     const cached = this.userNameCache.get(userId);
